@@ -223,8 +223,9 @@ export function ArciumPrivacyProvider({ children }) {
       return Number(bigV % MAX_RESCUE_INPUT)
     })
 
-    // Generate random 16-byte nonce for this encryption
-    const nonce = crypto.getRandomValues(new Uint8Array(16))
+    // Generate random 16-byte nonce — must use window.crypto (Web Crypto API),
+    // NOT crypto-browserify which doesn't implement getRandomValues
+    const nonce = (window.crypto || globalThis.crypto).getRandomValues(new Uint8Array(16))
 
     // Encrypt using RescueCipher (REAL Arcium SDK encryption)
     const ciphertext = cipher.encrypt(inputs, nonce)
@@ -241,7 +242,7 @@ export function ArciumPrivacyProvider({ children }) {
       inputs,
       rawCiphertext: ciphertext,
       rawNonce: nonce,
-      computationOffset: Array.from(crypto.getRandomValues(new Uint8Array(8)))
+      computationOffset: Array.from((window.crypto || globalThis.crypto).getRandomValues(new Uint8Array(8)))
         .map(b => b.toString(16).padStart(2, '0')).join(''),
     }
   }, [])
