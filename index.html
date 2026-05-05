@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<link rel="icon" type="image/svg+xml" href="/favicon.svg" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="description" content="PuffinPerpDex – Privacy-First Perpetual DEX on Solana powered by Arcium confidential computation." />
+<meta property="og:title" content="PuffinPerpDex — Private Perpetual Trading on Solana" />
+<meta property="og:description" content="Trade perpetuals privately with Arcium MPC encryption. No front-running. No exposed positions." />
+<meta property="og:type" content="website" />
+<title>PuffinPerpDex</title>
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet" />
+</head>
+<body>
+<div id="root"></div>
+<!-- Polyfills: must load before ES module bundle -->
+<script>
+  window.global = window.global ?? globalThis;
+  window.process = window.process ?? { env: {}, browser: true, version: 'v18.0.0' };
+</script>
+<script type="module" src="/src/main.jsx"></script>
+</body>
+</html>
