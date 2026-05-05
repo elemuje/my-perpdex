@@ -16,9 +16,10 @@ export default defineConfig({
       stream: path.resolve(__dirname, 'node_modules/stream-browserify/index.js'),
       util: path.resolve(__dirname, 'node_modules/util/util.js'),
       events: path.resolve(__dirname, 'node_modules/events/events.js'),
-      // crypto-browserify provides randomBytes/createHash for @arcium-hq/client
-      // It must come last so native window.crypto is still used by our own code
-      crypto: path.resolve(__dirname, 'node_modules/crypto-browserify/index.js'),
+      // NOTE: Do NOT alias 'crypto' to crypto-browserify — it overrides window.crypto
+      // and breaks crypto.getRandomValues() in the browser.
+      // Instead we provide a targeted shim that uses Web Crypto API only.
+      crypto: path.resolve(__dirname, 'src/crypto-shim.js'),
     },
   },
   server: { port: 3000 },
