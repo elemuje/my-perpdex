@@ -37,55 +37,104 @@ function CopyBtn({ text }) {
   )
 }
 
-// ── Price Chart (Recharts) ──
+// ── Price Chart (live animated) ──
 function PriceChart({ pair }) {
   const { price, change24h } = useRealtimePrice(pair)
   const [history, setHistory] = useState([])
   const [loading, setLoading] = useState(true)
-  const [interval, setInterval] = useState('1m')
+  const [chartInterval, setChartInterval] = useState('1m')
+  const tickRef = useRef(null)
+  const baseRef = useRef(null)
 
+  // Load historical + seed fallback
   useEffect(() => {
     setLoading(true)
-    fetchHistoricalPrices(pair, interval, 100).then(data => {
-      setHistory(data.length ? data : generateFallback(pair, interval))
+    fetchHistoricalPrices(pair, chartInterval, 100).then(data => {
+      const seed = data.length ? data : generateFallback(pair, chartInterval)
+      setHistory(seed)
+      baseRef.current = seed[seed.length - 1]?.price ?? parseFloat(SEED_PRICES[pair] ?? 100)
       setLoading(false)
     })
-  }, [pair, interval])
+  }, [pair, chartInterval])
 
-  // Update last candle in real-time
+  // Animate chart tick every 800ms — appends a new micro-candle so it flows continuously
   useEffect(() => {
-    if (!history.length || !price) return
+    if (loading) return
+    tickRef.current = setInterval(() => {
+      setHistory(prev => {
+        if (!prev.length) return prev
+        const last = prev[prev.length - 1]
+        const base = baseRef.current ?? last.price
+        // Random walk: small drift + noise
+        const drift = (Math.random() - 0.499) * base * 0.0012
+        const newPrice = Math.max(base * 0.85, base + drift)
+        baseRef.current = newPrice
+        const now = new Date()
+        const timeLabel = now.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+        // Either update last candle or push a new one every ~30 ticks
+        const shouldAppend = prev.length < 120 || Math.random() < 0.08
+        if (shouldAppend) {
+          const newCandle = {
+            time: timeLabel,
+            open: last.price,
+            high: Math.max(last.price, newPrice),
+            low: Math.min(last.price, newPrice),
+            close: newPrice,
+            price: newPrice,
+            volume: Math.random() * 500,
+          }
+          return [...prev.slice(-119), newCandle]
+        } else {
+          const next = [...prev]
+          const updated = { ...last, price: newPrice, close: newPrice, high: Math.max(last.high ?? last.price, newPrice), low: Math.min(last.low ?? last.price, newPrice) }
+          next[next.length - 1] = updated
+          return next
+        }
+      })
+    }, 800)
+    return () => clearInterval(tickRef.current)
+  }, [loading, pair, chartInterval])
+
+  // Sync real price from API into chart when it arrives
+  useEffect(() => {
+    if (!price || !history.length) return
+    baseRef.current = price
     setHistory(prev => {
+      if (!prev.length) return prev
       const next = [...prev]
-      next[next.length - 1] = { ...next[next.length - 1], price, high: Math.max(next[next.length - 1].high, price), low: Math.min(next[next.length - 1].low, price) }
+      const last = next[next.length - 1]
+      next[next.length - 1] = { ...last, price, close: price, high: Math.max(last.high ?? last.price, price), low: Math.min(last.low ?? last.price, price) }
       return next
     })
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [price])
+
+  const isPos = (change24h || 0) >= 0
+  const currentPrice = history.length ? history[history.length - 1].price : (price ?? 0)
 
   if (loading) return <div className="flex-1 flex items-center justify-center"><Skeleton className="h-64 w-full" /></div>
 
-  const isPos = (change24h || 0) >= 0
   return (
     <div className="flex-1 flex flex-col gap-2">
       <div className="flex items-center justify-between">
         <div className="flex gap-1">
           {[{ label: '1m', val: '1m' }, { label: '5m', val: '5m' }, { label: '15m', val: '15m' }, { label: '1H', val: '1h' }, { label: '4H', val: '4h' }, { label: '1D', val: '1d' }].map(b => (
-            <button key={b.val} onClick={() => setInterval(b.val)}
+            <button key={b.val} onClick={() => setChartInterval(b.val)}
               className="px-2 py-1 rounded text-[11px] font-semibold transition-all"
-              style={{ background: interval === b.val ? 'rgba(240,185,11,0.15)' : 'transparent', color: interval === b.val ? YELLOW : MUTED, border: interval === b.val ? '1px solid rgba(240,185,11,0.3)' : '1px solid transparent' }}>
+              style={{ background: chartInterval === b.val ? 'rgba(240,185,11,0.15)' : 'transparent', color: chartInterval === b.val ? YELLOW : MUTED, border: chartInterval === b.val ? '1px solid rgba(240,185,11,0.3)' : '1px solid transparent' }}>
               {b.label}
             </button>
           ))}
         </div>
         <div className="text-right">
-          <div className="text-xl font-extrabold tabular-nums" style={{ color: isPos ? GREEN : RED }}>${price.toFixed(PRICE_DECIMALS[pair])}</div>
+          <div className="text-xl font-extrabold tabular-nums transition-colors" style={{ color: isPos ? GREEN : RED }}>
+            ${currentPrice.toFixed(PRICE_DECIMALS[pair])}
+          </div>
           <div className="text-[11px] font-semibold" style={{ color: isPos ? GREEN : RED }}>
-            {isPos ? '+' : ''}{change24h.toFixed(2)}%
+            {isPos ? '+' : ''}{(change24h || 0).toFixed(2)}%
           </div>
         </div>
       </div>
-      <div className="flex-1">
+      <div className="flex-1" style={{ minHeight: 280 }}>
         <ChartCanvas data={history} positive={isPos} />
       </div>
     </div>
@@ -96,38 +145,104 @@ function ChartCanvas({ data, positive }) {
   const color = positive ? GREEN : RED
   if (!data.length) return null
 
-  const width = 800, height = 340, pad = { t: 20, r: 16, b: 30, l: 12 }
+  const width = 800, height = 300, pad = { t: 16, r: 16, b: 28, l: 56 }
   const prices = data.map(d => d.price)
-  const minP = Math.min(...prices) * 0.9995, maxP = Math.max(...prices) * 1.0005, rng = maxP - minP || 1
+  const minP = Math.min(...prices), maxP = Math.max(...prices)
+  const pad5 = (maxP - minP) * 0.05 || minP * 0.002
+  const lo = minP - pad5, hi = maxP + pad5, rng = hi - lo
 
   const toX = i => pad.l + (i / (data.length - 1)) * (width - pad.l - pad.r)
-  const toY = p => pad.t + (1 - (p - minP) / rng) * (height - pad.t - pad.b)
+  const toY = p => pad.t + (1 - (p - lo) / rng) * (height - pad.t - pad.b)
 
-  const areaPath = data.map((d, i) => `${i === 0 ? 'M' : 'L'}${toX(i)},${toY(d.price)}`).join(' ')
-  const areaFill = areaPath + ` L${toX(data.length - 1)},${height - pad.b} L${toX(0)},${height - pad.b} Z`
+  const linePath = data.map((d, i) => `${i === 0 ? 'M' : 'L'}${toX(i).toFixed(1)},${toY(d.price).toFixed(1)}`).join(' ')
+  const areaPath = linePath + ` L${toX(data.length - 1).toFixed(1)},${height - pad.b} L${toX(0).toFixed(1)},${height - pad.b} Z`
 
-  const candleW = Math.max(1, (width - pad.l - pad.r) / data.length * 0.6)
+  // Y-axis gridlines
+  const gridCount = 4
+  const gridLines = Array.from({ length: gridCount + 1 }, (_, i) => {
+    const p = lo + (rng * i) / gridCount
+    return { y: toY(p), label: p >= 1000 ? `$${(p / 1000).toFixed(1)}k` : p >= 1 ? `$${p.toFixed(2)}` : `$${p.toFixed(6)}` }
+  })
+
+  const lastPrice = data[data.length - 1].price
+  const lastY = toY(lastPrice)
+  const candleW = Math.max(1.5, (width - pad.l - pad.r) / data.length * 0.55)
 
   return (
-    <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full" preserveAspectRatio="none">
+    <svg viewBox={`0 0 ${width} ${height}`} className="w-full h-full" preserveAspectRatio="none" style={{ overflow: 'visible' }}>
       <defs>
-        <linearGradient id="areaGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor={color} stopOpacity="0.15" />
-          <stop offset="100%" stopColor={color} stopOpacity="0" />
+        <linearGradient id={`ag-${positive}`} x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={color} stopOpacity="0.18" />
+          <stop offset="100%" stopColor={color} stopOpacity="0.01" />
         </linearGradient>
+        <filter id="glow">
+          <feGaussianBlur stdDeviation="2" result="blur" />
+          <feMerge><feMergeNode in="blur" /><feMergeNode in="SourceGraphic" /></feMerge>
+        </filter>
       </defs>
-      <path d={areaFill} fill="url(#areaGrad)" />
-      <path d={areaPath} fill="none" stroke={color} strokeWidth="1.5" />
+
+      {/* Grid lines */}
+      {gridLines.map((g, i) => (
+        <g key={i}>
+          <line x1={pad.l} y1={g.y} x2={width - pad.r} y2={g.y} stroke="#ffffff" strokeOpacity="0.04" strokeWidth="1" strokeDasharray="4 4" />
+          <text x={pad.l - 6} y={g.y + 4} textAnchor="end" fontSize="9" fill="#848E9C">{g.label}</text>
+        </g>
+      ))}
+
+      {/* Candle wicks */}
       {data.map((d, i) => {
-        const isGreen = d.close >= d.open
+        const isUp = (d.close ?? d.price) >= (d.open ?? d.price)
+        const hi = d.high ?? d.price, lo2 = d.low ?? d.price
         return (
-          <g key={i}>
-            <line x1={toX(i)} y1={toY(d.high)} x2={toX(i)} y2={toY(d.low)} stroke={isGreen ? GREEN : RED} strokeWidth="0.5" opacity="0.5" />
-            <rect x={toX(i) - candleW / 2} y={toY(Math.max(d.open, d.close))} width={candleW} height={Math.max(1, Math.abs(toY(d.open) - toY(d.close)))} rx="0.5" fill={isGreen ? GREEN : RED} opacity="0.6" />
-          </g>
+          <line key={`w${i}`} x1={toX(i)} y1={toY(hi)} x2={toX(i)} y2={toY(lo2)}
+            stroke={isUp ? GREEN : RED} strokeWidth="0.6" opacity="0.4" />
         )
       })}
+
+      {/* Area fill */}
+      <path d={areaPath} fill={`url(#ag-${positive})`} />
+
+      {/* Price line */}
+      <path d={linePath} fill="none" stroke={color} strokeWidth="1.8" filter="url(#glow)" />
+
+      {/* Candle bodies */}
+      {data.map((d, i) => {
+        const isUp = (d.close ?? d.price) >= (d.open ?? d.price)
+        const y1 = toY(Math.max(d.open ?? d.price, d.close ?? d.price))
+        const y2 = toY(Math.min(d.open ?? d.price, d.close ?? d.price))
+        return (
+          <rect key={`c${i}`} x={toX(i) - candleW / 2} y={y1} width={candleW}
+            height={Math.max(1, y2 - y1)} rx="0.5"
+            fill={isUp ? GREEN : RED} opacity="0.55" />
+        )
+      })}
+
+      {/* Live price line */}
+      <line x1={pad.l} y1={lastY} x2={width - pad.r} y2={lastY}
+        stroke={color} strokeWidth="0.8" strokeDasharray="5 3" strokeOpacity="0.6" />
+      {/* Price tag */}
+      <rect x={width - pad.r + 2} y={lastY - 9} width={48} height={16} rx="3" fill={color} opacity="0.9" />
+      <text x={width - pad.r + 26} y={lastY + 4} textAnchor="middle" fontSize="9" fontWeight="bold" fill="#fff">
+        {lastPrice >= 1000 ? `${(lastPrice / 1000).toFixed(2)}k` : lastPrice >= 1 ? lastPrice.toFixed(2) : lastPrice.toFixed(5)}
+      </text>
+
+      {/* Animated dot at last point */}
+      <circle cx={toX(data.length - 1)} cy={lastY} r="3.5" fill={color} opacity="0.9">
+        <animate attributeName="r" values="3;5;3" dur="1.6s" repeatCount="indefinite" />
+        <animate attributeName="opacity" values="0.9;0.4;0.9" dur="1.6s" repeatCount="indefinite" />
+      </circle>
+
+      {/* X-axis */}
       <line x1={pad.l} y1={height - pad.b} x2={width - pad.r} y2={height - pad.b} stroke="#ffffff" strokeOpacity="0.06" strokeWidth="1" />
+      {/* X labels — every ~20 candles */}
+      {data.filter((_, i) => i % Math.max(1, Math.floor(data.length / 6)) === 0).map((d, i, arr) => {
+        const origIdx = i * Math.max(1, Math.floor(data.length / 6))
+        return (
+          <text key={i} x={toX(origIdx)} y={height - pad.b + 14} textAnchor="middle" fontSize="9" fill="#848E9C">
+            {d.time}
+          </text>
+        )
+      })}
     </svg>
   )
 }
@@ -294,6 +409,22 @@ function PositionsTab({ positions, history, onClose, toast }) {
                   <div><div className="text-[9px]" style={{ color: MUTED }}>Entry</div><div className="text-xs font-mono text-white">${pos.entryPrice}</div></div>
                   <div><div className="text-[9px]" style={{ color: MUTED }}>Margin</div><div className="text-xs font-mono" style={{ color: YELLOW }}>{pos.margin}</div></div>
                 </div>
+                {(pos.stopLoss || pos.takeProfit) && (
+                  <div className="flex items-center gap-2 mb-2">
+                    {pos.stopLoss && (
+                      <div className="flex items-center gap-1 px-2 py-0.5 rounded" style={{ background: 'rgba(246,70,93,0.08)', border: '1px solid rgba(246,70,93,0.2)' }}>
+                        <span className="text-[9px] font-semibold" style={{ color: RED }}>SL</span>
+                        <span className="text-[9px] font-mono text-white">${parseFloat(pos.stopLoss).toFixed(2)}</span>
+                      </div>
+                    )}
+                    {pos.takeProfit && (
+                      <div className="flex items-center gap-1 px-2 py-0.5 rounded" style={{ background: 'rgba(2,192,118,0.08)', border: '1px solid rgba(2,192,118,0.2)' }}>
+                        <span className="text-[9px] font-semibold" style={{ color: GREEN }}>TP</span>
+                        <span className="text-[9px] font-mono text-white">${parseFloat(pos.takeProfit).toFixed(2)}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
                 <div className="flex items-center justify-between">
                   <div className="text-[10px]" style={{ color: MUTED }}>Liq: <span className="font-mono text-white">${pos.liquidationPrice}</span></div>
                   <button onClick={() => onClose(pos.id)}
@@ -321,6 +452,22 @@ function PositionsTab({ positions, history, onClose, toast }) {
                 <span>{h.size} @ ${h.entryPrice}</span>
                 <span>{h.leverage}x</span>
               </div>
+              {(h.stopLoss || h.takeProfit) && (
+                <div className="flex items-center gap-2 mt-1.5">
+                  {h.stopLoss && (
+                    <div className="flex items-center gap-1 px-1.5 py-0.5 rounded" style={{ background: 'rgba(246,70,93,0.08)', border: '1px solid rgba(246,70,93,0.15)' }}>
+                      <span className="text-[9px] font-semibold" style={{ color: '#F6465D' }}>SL</span>
+                      <span className="text-[9px] font-mono text-white">${parseFloat(h.stopLoss).toFixed(2)}</span>
+                    </div>
+                  )}
+                  {h.takeProfit && (
+                    <div className="flex items-center gap-1 px-1.5 py-0.5 rounded" style={{ background: 'rgba(2,192,118,0.08)', border: '1px solid rgba(2,192,118,0.15)' }}>
+                      <span className="text-[9px] font-semibold" style={{ color: '#02C076' }}>TP</span>
+                      <span className="text-[9px] font-mono text-white">${parseFloat(h.takeProfit).toFixed(2)}</span>
+                    </div>
+                  )}
+                </div>
+              )}
             </div>
           ))}
         </div>
@@ -344,6 +491,9 @@ export default function Trade() {
   const [orderType, setOrderType] = useState('market')
   const [showPipelineModal, setShowPipelineModal] = useState(false)
   const [priceUpdated, setPriceUpdated] = useState(false)
+  const [stopLoss, setStopLoss] = useState('')
+  const [takeProfit, setTakeProfit] = useState('')
+  const [showSlTp, setShowSlTp] = useState(false)
 
   const { price, change24h } = useRealtimePrice(currentPair)
 
@@ -377,7 +527,7 @@ export default function Trade() {
       const tradeParams = {
         side, pair: currentPair, entryPrice: price.toString(), size: size.toString(),
         leverage: leverage.toString(), margin: margin.toFixed(4), liquidationPrice: estLiq.toFixed(2),
-        orderType, isPrivate: isPrivateMode,
+        orderType, isPrivate: isPrivateMode, stopLoss: stopLoss || null, takeProfit: takeProfit || null,
       }
 
       // Run the full Arcium pipeline (with real SDK encryption if available)
@@ -546,6 +696,46 @@ export default function Trade() {
               </div>
             </div>
 
+
+            {/* Stop Loss / Take Profit */}
+            <div className="mb-4">
+              <button onClick={() => setShowSlTp(v => !v)}
+                className="w-full flex items-center justify-between px-3 py-2 rounded-lg text-xs font-semibold transition-all"
+                style={{ background: showSlTp ? "rgba(240,185,11,0.08)" : "rgba(255,255,255,0.03)", color: showSlTp ? YELLOW : MUTED, border: showSlTp ? "1px solid rgba(240,185,11,0.2)" : "1px solid rgba(255,255,255,0.06)" }}>
+                <span>TP / SL</span>
+                <span style={{ fontSize: 10, color: (stopLoss || takeProfit) ? GREEN : MUTED }}>
+                  {stopLoss || takeProfit ? `SL:${stopLoss||"—"} TP:${takeProfit||"—"}` : "Not set"}
+                </span>
+              </button>
+              {showSlTp && (
+                <div className="mt-2 grid grid-cols-2 gap-2">
+                  <div>
+                    <div className="text-[9px] font-semibold mb-1" style={{ color: RED }}>Stop Loss</div>
+                    <Input type="number" placeholder={price ? (side==="long" ? (price*0.97).toFixed(PRICE_DECIMALS[currentPair]) : (price*1.03).toFixed(PRICE_DECIMALS[currentPair])) : "0.00"}
+                      value={stopLoss} onChange={e => setStopLoss(e.target.value)}
+                      className="bg-[#0B0E11] border-white/10 text-white text-xs h-8"
+                      style={{ borderColor: stopLoss ? "rgba(246,70,93,0.4)" : undefined }} />
+                    {stopLoss && price && (
+                      <div className="text-[9px] mt-0.5" style={{ color: RED }}>
+                        Loss: {((Math.abs(price - parseFloat(stopLoss)) / price) * leverage * 100).toFixed(1)}%
+                      </div>
+                    )}
+                  </div>
+                  <div>
+                    <div className="text-[9px] font-semibold mb-1" style={{ color: GREEN }}>Take Profit</div>
+                    <Input type="number" placeholder={price ? (side==="long" ? (price*1.05).toFixed(PRICE_DECIMALS[currentPair]) : (price*0.95).toFixed(PRICE_DECIMALS[currentPair])) : "0.00"}
+                      value={takeProfit} onChange={e => setTakeProfit(e.target.value)}
+                      className="bg-[#0B0E11] border-white/10 text-white text-xs h-8"
+                      style={{ borderColor: takeProfit ? "rgba(2,192,118,0.4)" : undefined }} />
+                    {takeProfit && price && (
+                      <div className="text-[9px] mt-0.5" style={{ color: GREEN }}>
+                        Profit: +{((Math.abs(parseFloat(takeProfit) - price) / price) * leverage * 100).toFixed(1)}%
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
             {/* Summary */}
             <div className="rounded-lg p-3 mb-4 space-y-1.5" style={{ background: '#0B0E11', border: '1px solid rgba(255,255,255,0.05)' }}>
               <div className="flex justify-between text-xs">
