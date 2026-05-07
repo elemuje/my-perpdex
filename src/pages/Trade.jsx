@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { motion, AnimatePresence } from 'framer-motion'
 import { TrendingUp, TrendingDown, RefreshCw, Clock, Trash2, Copy, Check, Lock, Unlock, Calculator, Flame } from 'lucide-react'
 import { Button } from '@/components/ui/button'
